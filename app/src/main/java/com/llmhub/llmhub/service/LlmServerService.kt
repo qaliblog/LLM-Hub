@@ -138,9 +138,10 @@ class LlmServerService : Service() {
         val prefs = ThemePreferences(this@LlmServerService)
         val selectedModelName = prefs.serverSelectedModel.first() ?: request.model
 
-        val model = ModelData.models.find { it.name == selectedModelName }
-            ?: ModelData.models.find { it.name.contains(request.model, ignoreCase = true) }
-            ?: ModelData.models.firstOrNull { it.category == "text" || it.category == "multimodal" }
+        val availableModels = com.llmhub.llmhub.data.ModelRepository.getAvailableModels(this@LlmServerService)
+        val model = availableModels.find { it.name == selectedModelName }
+            ?: availableModels.find { it.name.contains(request.model, ignoreCase = true) }
+            ?: availableModels.firstOrNull { it.category == "text" || it.category == "multimodal" }
 
         if (model == null) {
             call.respond(HttpStatusCode.NotFound, "Model not found")

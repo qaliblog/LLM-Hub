@@ -243,12 +243,12 @@ class NexaInferenceService @Inject constructor(
                 // Cap context size to prevent OOM on mobile devices.
                 // GGUF models allocate KV cache proportional to nCtx;
                 // 130K+ tokens will exhaust RAM on any phone.
-                // VLM models' memory cost grows with nCtx. Cap to 8192 for vision-enabled GGUF to keep allocations reasonable
-                // When vision is disabled, honor the user/model selected context window instead of forcing a cap.
-                val MAX_SAFE_CTX = if (model.supportsVision && !disableVision) 8192 else Int.MAX_VALUE
+                // VLM models' memory cost grows with nCtx. Cap to 8192 for vision-enabled GGUF to keep allocations reasonable.
+                // For non-vision GGUF models, cap to 32768 tokens which is a safe upper bound for most modern phones.
+                val MAX_SAFE_CTX = if (model.supportsVision && !disableVision) 8192 else 32768
                 val rawCtx = overrideMaxTokens ?: model.contextWindowSize
-                val nCtx = if (disableVision) rawCtx else rawCtx.coerceAtMost(MAX_SAFE_CTX)
-                if (!disableVision && rawCtx != nCtx) {
+                val nCtx = rawCtx.coerceAtMost(MAX_SAFE_CTX)
+                if (rawCtx != nCtx) {
                     Log.w(TAG, "Capped nCtx from $rawCtx to $nCtx to prevent OOM")
                 }
                 // Determine device/plugin to use. If caller provided an explicit deviceId (e.g. "HTP0") prefer it

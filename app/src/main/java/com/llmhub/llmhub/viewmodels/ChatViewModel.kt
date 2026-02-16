@@ -627,112 +627,18 @@ class ChatViewModel(
     }
 
     /**
-     * Load downloaded models synchronously so callers can rely on the result immediately.
+     * Load available models (bundled, downloaded, or imported) synchronously.
      */
     private suspend fun loadAvailableModelsSync(context: Context) {
-        val downloadedModels = ModelData.models
-            .filter { it.category != "embedding" && !it.name.contains("Projector", ignoreCase = true) }
-            .mapNotNull { model ->
-            var isAvailable = false
-            var actualSize = model.sizeBytes
-
-            // Check if model is available in assets (priority)
-            val assetPath = if (model.url.startsWith("file://models/")) {
-                model.url.removePrefix("file://")
-            } else {
-                "models/${model.localFileName()}"
-            }
-
-            try {
-                context.assets.open(assetPath).use { inputStream ->
-                    actualSize = inputStream.available().toLong()
-                    isAvailable = true
-                    Log.d("ChatViewModel", "Found model in assets: $assetPath (${actualSize / (1024*1024)} MB)")
-                }
-            } catch (e: Exception) {
-                // Model not in assets, check files directory
-                val modelsDir = File(context.filesDir, "models")
-                
-                // Check for ONNX models with additional files first
-                if (model.modelFormat == "onnx" && model.additionalFiles.isNotEmpty()) {
-                    val modelDirName = model.name.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_.-]"), "")
-                    val onnxModelDir = File(modelsDir, modelDirName)
-                    
-                    if (onnxModelDir.exists() && onnxModelDir.isDirectory) {
-                        val files = onnxModelDir.listFiles() ?: emptyArray()
-                        val fileCount = files.filter { it.length() > 0 }.size
-                        val expectedFileCount = 1 + model.additionalFiles.size
-                        val totalSize = files.sumOf { it.length() }
-                        
-                        if (fileCount >= expectedFileCount) {
-                            isAvailable = true
-                            actualSize = totalSize
-                            Log.d("ChatViewModel", "Found ONNX model in ${onnxModelDir.absolutePath} with $fileCount files (${totalSize / (1024*1024)} MB)")
-                        } else {
-                            Log.d("ChatViewModel", "ONNX model incomplete: only $fileCount/$expectedFileCount files in ${onnxModelDir.absolutePath}")
-                        }
-                    }
-                } else {
-                    // Regular single-file models
-                    val primaryFile = File(modelsDir, model.localFileName())
-                    val legacyFile = File(modelsDir, "${model.name.replace(" ", "_")}.gguf")
-
-                    // Migrate legacy file if needed
-                    if (!primaryFile.exists() && legacyFile.exists()) {
-                        legacyFile.renameTo(primaryFile)
-                    }
-
-                    if (primaryFile.exists()) {
-                        // Only treat as available if file is fully downloaded (at least 99% of expected size)
-                        val sizeKnown = model.sizeBytes > 0
-                        val sizeOk = if (sizeKnown) {
-                            primaryFile.length() >= (model.sizeBytes * 0.99).toLong()
-                        } else {
-                            primaryFile.length() >= 10L * 1024 * 1024 // Fallback for unknown size: at least 10MB
-                        }
-                        val valid = isModelFileValid(primaryFile, model.modelFormat)
-                        if (sizeOk && valid) {
-                            isAvailable = true
-                            actualSize = primaryFile.length()
-                            Log.d("ChatViewModel", "Found VALID model in files: ${primaryFile.absolutePath} (${actualSize / (1024*1024)} MB)")
-                        } else {
-                            Log.d("ChatViewModel", "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath} sizeOk=$sizeOk valid=$valid size=${primaryFile.length()}/${model.sizeBytes}")
-                        }
-                        }
-                    }
-                }
-
-
-            if (isAvailable) {
-                model.copy(isDownloaded = true, sizeBytes = actualSize)
-            } else {
-                null
-            }
-        }
-
-        // Get imported models from ModelDownloadViewModel
-        val importedModels = try {
-            // Get ModelDownloadViewModel instance to access imported models
-            val modelDownloadViewModel = androidx.lifecycle.ViewModelProvider(
-                context as androidx.activity.ComponentActivity,
-                androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(context.application)
-            )[ModelDownloadViewModel::class.java]
-            // Filter out image generation models (qnn_npu, mnn_cpu) - those are for Image Generator, not AI Chat
-            modelDownloadViewModel.getImportedModels().filter { 
-                it.category != "qnn_npu" && it.category != "mnn_cpu" 
-            }
-        } catch (e: Exception) {
-            Log.w("ChatViewModel", "Could not get imported models: ${e.message}")
-            emptyList()
+        val availableModels = ModelRepository.getAvailableModels(context) { model ->
+            // Exclude embedding models and standalone projectors from the chat model list
+            model.category != "embedding" && !model.name.contains("Projector", ignoreCase = true)
         }
         
-        // Combine downloaded and imported models
-        val allAvailableModels = downloadedModels + importedModels
-        
-        _availableModels.value = allAvailableModels
+        _availableModels.value = availableModels
         
         // If we have a current model but it's not in the available models, clear it
-        if (currentModel != null && !allAvailableModels.any { it.name == currentModel?.name }) {
+        if (currentModel != null && !availableModels.any { it.name == currentModel?.name }) {
             Log.d("ChatViewModel", "Current model ${currentModel?.name} is no longer available")
             currentModel = null
         }

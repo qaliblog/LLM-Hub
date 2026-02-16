@@ -107,6 +107,12 @@ object ModelRepository {
                 if (model.category == "qnn_npu" || model.category == "mnn_cpu") {
                     return@filter false
                 }
+
+                // If it has a content URI, it's valid for initial loading even if not yet copied to internal storage
+                if (model.url.startsWith("content://")) {
+                    return@filter true
+                }
+
                 // Ensure the backing file still exists and is valid
                 val modelsDir = File(context.filesDir, "models")
                 val file = File(modelsDir, model.localFileName())
