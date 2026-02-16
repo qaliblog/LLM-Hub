@@ -1,5 +1,10 @@
 package com.llmhub.llmhub.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,7 +23,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llmhub.llmhub.R
-import com.llmhub.llmhub.data.ModelData
 import com.llmhub.llmhub.data.localFileName
 import com.llmhub.llmhub.service.LlmServerService
 import com.llmhub.llmhub.viewmodels.ServerViewModel
@@ -43,16 +47,38 @@ fun ServerScreen(
 
     val localIp = remember { serverViewModel.getLocalIpAddress() }
 
-    // Get downloaded models only
-    val downloadedModels = remember(context) {
-        ModelData.models
-            .filter { it.category == "text" || it.category == "multimodal" }
-            .filter { model ->
-                val modelsDir = File(context.filesDir, "models")
-                val modelFile = File(modelsDir, model.localFileName())
-                modelFile.exists() && modelFile.length() > 0
+    // Get all available models (downloaded + imported)
+    val availableModels = remember(serverSelectedModel, showModelDialog) {
+        serverViewModel.getAvailableModels()
+    }
+
+    val ggufPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            val fileName = try {
+                context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                    } else null
+                } ?: it.lastPathSegment ?: "model.gguf"
+            } catch (e: Exception) {
+                it.lastPathSegment ?: "model.gguf"
             }
-            .map { it.name }
+
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                Log.w("ServerScreen", "Could not take persistent permission for URI: ${e.message}")
+            }
+
+            serverViewModel.importGguf(it, fileName)
+            showModelDialog = false
+        }
     }
 
     Scaffold(
@@ -264,7 +290,7 @@ fun ServerScreen(
                             Text("Default (from request)")
                         }
                     }
-                    items(downloadedModels) { modelName ->
+                    items(availableModels) { model ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -272,14 +298,26 @@ fun ServerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
-                                selected = serverSelectedModel == modelName,
+                                selected = serverSelectedModel == model.name,
                                 onClick = {
-                                    serverViewModel.setServerSelectedModel(modelName)
+                                    serverViewModel.setServerSelectedModel(model.name)
                                     showModelDialog = false
                                 }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(modelName)
+                            Text(model.name)
+                        }
+                    }
+
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Button(
+                            onClick = { ggufPickerLauncher.launch(arrayOf("*/*")) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Load GGUF from storage...")
                         }
                     }
                 }
