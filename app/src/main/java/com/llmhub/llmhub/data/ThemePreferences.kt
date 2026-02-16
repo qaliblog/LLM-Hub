@@ -28,6 +28,12 @@ class ThemePreferences(private val context: Context) {
         private val MEMORY_ENABLED_KEY = booleanPreferencesKey("memory_enabled")
         private val AUTO_READOUT_ENABLED_KEY = booleanPreferencesKey("auto_readout_enabled")
         private val GITHUB_STARS_KEY = androidx.datastore.preferences.core.intPreferencesKey("github_stars")
+
+        // Server preferences
+        private val SERVER_ENABLED_KEY = booleanPreferencesKey("server_enabled")
+        private val SERVER_PORT_KEY = androidx.datastore.preferences.core.intPreferencesKey("server_port")
+        private val SERVER_SELECTED_MODEL_KEY = stringPreferencesKey("server_selected_model")
+        private val SERVER_API_TYPE_KEY = stringPreferencesKey("server_api_type")
     }
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data
@@ -117,6 +123,55 @@ class ThemePreferences(private val context: Context) {
     suspend fun setAutoReadoutEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[AUTO_READOUT_ENABLED_KEY] = enabled
+        }
+    }
+
+    // Server preference flows
+    val serverEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[SERVER_ENABLED_KEY] ?: false
+        }
+
+    val serverPort: Flow<Int> = context.dataStore.data
+        .map { preferences ->
+            preferences[SERVER_PORT_KEY] ?: 8080
+        }
+
+    val serverSelectedModel: Flow<String?> = context.dataStore.data
+        .map { preferences ->
+            preferences[SERVER_SELECTED_MODEL_KEY]
+        }
+
+    val serverApiType: Flow<String> = context.dataStore.data
+        .map { preferences ->
+            preferences[SERVER_API_TYPE_KEY] ?: "OpenAI"
+        }
+
+    suspend fun setServerEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SERVER_ENABLED_KEY] = enabled
+        }
+    }
+
+    suspend fun setServerPort(port: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[SERVER_PORT_KEY] = port
+        }
+    }
+
+    suspend fun setServerSelectedModel(modelName: String?) {
+        context.dataStore.edit { preferences ->
+            if (modelName != null) {
+                preferences[SERVER_SELECTED_MODEL_KEY] = modelName
+            } else {
+                preferences.remove(SERVER_SELECTED_MODEL_KEY)
+            }
+        }
+    }
+
+    suspend fun setServerApiType(apiType: String) {
+        context.dataStore.edit { preferences ->
+            preferences[SERVER_API_TYPE_KEY] = apiType
         }
     }
 
