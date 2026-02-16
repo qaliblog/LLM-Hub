@@ -51,6 +51,15 @@ android {
     // Configure asset packs for install-time delivery
     assetPacks += mutableSetOf(":qnn_pack")
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.jks")
+            storePassword = "password"
+            keyAlias = "release"
+            keyPassword = "password"
+        }
+    }
+
     buildTypes {
         release {
             // Disable R8 minification to prevent stripping ONNX/Nexa JNI classes
@@ -64,7 +73,7 @@ android {
             ndk {
                 debugSymbolLevel = "NONE"
             }
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
