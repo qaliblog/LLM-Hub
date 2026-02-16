@@ -16,10 +16,13 @@ import kotlinx.coroutines.launch
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.llmhub.llmhub.LlmHubApplication
 import com.llmhub.llmhub.screens.*
 import com.llmhub.llmhub.viewmodels.ChatViewModelFactory
 import com.llmhub.llmhub.viewmodels.ThemeViewModel
+import com.llmhub.llmhub.viewmodels.ServerViewModel
+import com.llmhub.llmhub.viewmodels.ServerViewModelFactory
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
@@ -34,6 +37,7 @@ sealed class Screen(val route: String) {
     object ImageGenerator : Screen("image_generator")
     object Settings : Screen("settings")
     object Models : Screen("models")
+    object Server : Screen("server")
     object About : Screen("about")
     object Terms : Screen("terms")
 }
@@ -184,7 +188,22 @@ fun LlmHubNavigation(
                 onNavigateToTerms = {
                     navController.navigate(Screen.Terms.route)
                 },
+                onNavigateToServer = {
+                    navController.navigate(Screen.Server.route)
+                },
                 themeViewModel = themeViewModel
+            )
+        }
+
+        composable(Screen.Server.route) {
+            val serverViewModel: ServerViewModel = viewModel(
+                factory = ServerViewModelFactory(LocalContext.current)
+            )
+            ServerScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                serverViewModel = serverViewModel
             )
         }
         

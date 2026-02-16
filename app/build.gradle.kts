@@ -97,6 +97,10 @@ android {
             excludes += "META-INF/*.kotlin_module"
             // Exclude duplicate protobuf .proto files
             excludes += "google/protobuf/*.proto"
+            // Exclude duplicate INDEX.LIST files from Netty
+            excludes += "META-INF/INDEX.LIST"
+            // Exclude duplicate io.netty.versions.properties from Netty
+            excludes += "META-INF/io.netty.versions.properties"
         }
         // Configure JNI libraries packaging
         // useLegacyPackaging = true is REQUIRED because SDBackendService uses ProcessBuilder
@@ -207,6 +211,13 @@ dependencies {
     implementation("io.ktor:ktor-client-android:2.3.6")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.6")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.6")
+
+    // Ktor Server for the API
+    val ktor_version = "2.3.6"
+    implementation("io.ktor:ktor-server-core:$ktor_version")
+    implementation("io.ktor:ktor-server-netty:$ktor_version")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktor_version")
+    implementation("io.ktor:ktor-server-cors:$ktor_version")
     
     // OkHttp for SD backend communication
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

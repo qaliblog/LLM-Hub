@@ -53,6 +53,7 @@ fun SettingsScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToTerms: () -> Unit,
+    onNavigateToServer: () -> Unit,
     themeViewModel: ThemeViewModel = viewModel()
 ) {
     val uriHandler = LocalUriHandler.current
@@ -102,6 +103,13 @@ fun SettingsScreen(
                         title = stringResource(R.string.download_models),
                         subtitle = stringResource(R.string.browse_download_models),
                         onClick = onNavigateToModels
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.Dns,
+                        title = "Local API Server",
+                        subtitle = "Serve local models via API",
+                        onClick = onNavigateToServer
                     )
                     
                     // Embedding Model Selection
