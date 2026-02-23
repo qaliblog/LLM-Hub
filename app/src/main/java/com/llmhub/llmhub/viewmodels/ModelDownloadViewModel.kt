@@ -164,7 +164,7 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
                         val completeEnough = if (expectedFileCount > 0) {
                             fileCount >= expectedFileCount
                         } else {
-                            model.sizeBytes > 0 && totalDownloaded >= (model.sizeBytes * 0.95).toLong()
+                            isModelFileValid(imageGenDir, model.modelFormat, model.sizeBytes)
                         }
 
                         if (completeEnough) {
@@ -269,9 +269,9 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
 
+                // Use ModelIntegrity to determine if multi-file GGUF is complete
                 val sizeKnown = model.sizeBytes > 0
-                // 95% threshold to account for minor size differences or overhead
-                val completeEnough = sizeKnown && totalFoundBytes >= (model.sizeBytes * 0.95).toLong()
+                val completeEnough = isModelFileValid(primaryFile, model.modelFormat, model.sizeBytes)
 
                 if (completeEnough) {
                     model.copy(
@@ -314,10 +314,9 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
 
                 if (file.exists()) {
                     val sizeKnown = model.sizeBytes > 0
-                    val completeEnough = sizeKnown && file.length() >= (model.sizeBytes * 0.95).toLong()
-                    val valid = isModelFileValid(file, model.modelFormat)
+                    val valid = isModelFileValid(file, model.modelFormat, model.sizeBytes)
 
-                    if (completeEnough && valid) {
+                    if (valid) {
                         model.copy(
                             isDownloaded = true,
                             isDownloading = false,
@@ -351,7 +350,7 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
                     val modelsDir = File(context.filesDir, "models")
                     val file = File(modelsDir, partial.localFileName())
                     if (file.exists()) {
-                        val valid = isModelFileValid(file, partial.modelFormat)
+                        val valid = isModelFileValid(file, partial.modelFormat, partial.sizeBytes)
                         if (valid) {
                             updateModel(partial.name) {
                                 it.copy(
@@ -635,10 +634,10 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
 
                         // If expectedTotal is zero or unknown, fall back to comparing against actual bytes (exact equality)
                         val completeEnough = if (expectedTotal > 0) {
-                            totalDownloadedOnDisk >= (expectedTotal * 0.995).toLong()
+                            totalDownloadedOnDisk >= (expectedTotal * 0.90).toLong()
                         } else {
                             // If downloader reported nothing, require the files to be non-empty and at least 90% of previously known size
-                            totalDownloadedOnDisk > 0 && (model.sizeBytes <= 0 || totalDownloadedOnDisk >= (model.sizeBytes * 0.95).toLong())
+                            totalDownloadedOnDisk > 0 && (model.sizeBytes <= 0 || totalDownloadedOnDisk >= (model.sizeBytes * 0.90).toLong())
                         }
 
                         if (completeEnough && cause == null) {
@@ -681,16 +680,9 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
                     val modelFile = primaryFile
 
                     val expectedBytes = latestStatus?.totalBytes ?: model.sizeBytes
+                    val valid = isModelFileValid(modelFile, model.modelFormat, expectedBytes)
 
-                    val minReasonableSize = 10 * 1024 * 1024 // 10 MiB
-                    val completed = modelFile.exists() && (
-                        (expectedBytes > 0 && modelFile.length() >= (expectedBytes * 0.95).toLong()) ||
-                        (expectedBytes <= 0 && modelFile.length() >= minReasonableSize)
-                    )
-
-                    val valid = if (completed) isModelFileValid(modelFile, model.modelFormat) else false
-
-                    if (completed && valid && cause == null) {
+                    if (valid && cause == null) {
                         updateModel(model.name) { it.copy(isDownloaded = true, isDownloading = false, downloadProgress = 1f, sizeBytes = modelFile.length(), downloadedBytes = modelFile.length(), totalBytes = modelFile.length()) }
                     } else {
                         // Keep partial file so user can resume, unless explicitly cancelled

@@ -78,22 +78,14 @@ object ModelAvailabilityProvider {
                 }
 
                 if (primaryFile.exists()) {
-                    val sizeKnown = model.sizeBytes > 0
-                    val sizeOk = if (sizeKnown) {
-                        // Require file to be at least 95% of expected size to filter out partial downloads
-                        // Relaxed threshold from 99% to avoid false negatives.
-                        primaryFile.length() >= (model.sizeBytes * 0.95).toLong()
-                    } else {
-                        primaryFile.length() >= 10L * 1024 * 1024
-                    }
-                    val valid = isModelFileValid(primaryFile, model.modelFormat)
-                    Log.d("ModelAvailability", "  File size: ${primaryFile.length()}, expected: ${model.sizeBytes}, sizeOk: $sizeOk, valid: $valid")
-                    if (sizeOk && valid) {
+                    val valid = isModelFileValid(primaryFile, model.modelFormat, model.sizeBytes)
+                    Log.d("ModelAvailability", "  File size: ${primaryFile.length()}, expected: ${model.sizeBytes}, valid: $valid")
+                    if (valid) {
                         isAvailable = true
                         actualSize = primaryFile.length()
                         Log.d("ModelAvailability", "  ✓ Model available: ${model.name}")
                     } else {
-                        Log.d("ModelAvailability", "  ✗ Model NOT available (size or validation failed): ${model.name}")
+                        Log.d("ModelAvailability", "  ✗ Model NOT available (integrity check failed): ${model.name}")
                     }
                 } else {
                     Log.d("ModelAvailability", "  ✗ Model file does not exist: ${model.name}")
