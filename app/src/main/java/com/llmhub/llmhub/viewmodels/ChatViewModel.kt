@@ -305,9 +305,17 @@ class ChatViewModel(
         val savedModelName = prefs.getString("selected_model_name", null)
         if (savedModelName != null) {
             viewModelScope.launch {
-                // Wait a bit for available models to be loaded
-                delay(200)
-                val model = _availableModels.value.find { it.name == savedModelName }
+                // Wait and retry a few times for available models to be scanned
+                var model: LLMModel? = null
+                for (retry in 1..5) {
+                    if (_availableModels.value.isEmpty()) {
+                        loadAvailableModelsSync(context)
+                    }
+                    model = _availableModels.value.find { it.name == savedModelName }
+                    if (model != null) break
+                    delay(500 * retry.toLong())
+                }
+
                 if (model != null) {
                     _selectedModel.value = model
                     // Initialize currentModel if not already set, to ensure it's ready for the first prompt
@@ -315,6 +323,8 @@ class ChatViewModel(
                         currentModel = model
                         Log.d("ChatViewModel", "Initialized currentModel from saved settings: ${model.name}")
                     }
+                } else {
+                    Log.w("ChatViewModel", "Saved model $savedModelName not found after retries")
                 }
             }
         }
@@ -335,6 +345,9 @@ class ChatViewModel(
     // Public method to select model and persist
     fun selectModel(model: LLMModel) {
         _selectedModel.value = model
+        // Synchronize currentModel to ensure sendMessage can immediately use the selection
+        currentModel = model
+
         // Auto-select backend if not set
         if (_selectedBackend.value == null) {
             _selectedBackend.value = if (model.supportsGpu) {
@@ -677,12 +690,10 @@ class ChatViewModel(
                     
                     // Check if we have enough files and the primary one is valid
                     if (fileCount >= expectedFileCount && primaryFile.exists()) {
-                        val sizeKnown = model.sizeBytes > 0
                         val totalSize = files.sumOf { it.length() }
-                        val sizeOk = !sizeKnown || totalSize >= (model.sizeBytes * 0.98).toLong()
-                        val valid = isModelFileValid(primaryFile, model.modelFormat)
+                        val valid = isModelFileValid(primaryFile, model.modelFormat, model.sizeBytes)
                         
-                        if (sizeOk && valid) {
+                        if (valid) {
                             isAvailable = true
                             actualSize = totalSize
                             Log.d("ChatViewModel", "Found VALID multi-file model (${model.modelFormat}) in ${targetDir.absolutePath} with $fileCount files")
@@ -698,21 +709,13 @@ class ChatViewModel(
                     }
 
                     if (primaryFile.exists()) {
-                        // Only treat as available if file is fully downloaded (at least 98% of expected size)
-                        // Align with ModelDownloadViewModel's 98% threshold to avoid "Model not properly loaded" errors.
-                        val sizeKnown = model.sizeBytes > 0
-                        val sizeOk = if (sizeKnown) {
-                            primaryFile.length() >= (model.sizeBytes * 0.98).toLong()
-                        } else {
-                            primaryFile.length() >= 10L * 1024 * 1024 // Fallback for unknown size: at least 10MB
-                        }
-                        val valid = isModelFileValid(primaryFile, model.modelFormat)
-                        if (sizeOk && valid) {
+                        val valid = isModelFileValid(primaryFile, model.modelFormat, model.sizeBytes)
+                        if (valid) {
                             isAvailable = true
                             actualSize = primaryFile.length()
                             Log.d("ChatViewModel", "Found VALID model in files: ${primaryFile.absolutePath} (${actualSize / (1024*1024)} MB)")
                         } else {
-                            Log.d("ChatViewModel", "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath} sizeOk=$sizeOk valid=$valid size=${primaryFile.length()}/${model.sizeBytes}")
+                            Log.d("ChatViewModel", "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath} size=${primaryFile.length()}/${model.sizeBytes}")
                         }
                     }
                 }
@@ -793,13 +796,36 @@ class ChatViewModel(
                 return@launch
             }
 
-            // Verify we have a working model
+            // Verify we have a working model, try one re-scan if missing
+            if (currentModel == null || !currentModel!!.isDownloaded) {
+                Log.d("ChatViewModel", "Current model missing or not downloaded, attempting re-scan...")
+                loadAvailableModelsSync(context)
+                val modelName = currentModel?.name ?: _selectedModel.value?.name
+                if (modelName != null) {
+                    val refreshedModel = _availableModels.value.find { it.name == modelName }
+                    if (refreshedModel != null && refreshedModel.isDownloaded) {
+                        currentModel = refreshedModel
+                        Log.d("ChatViewModel", "Recovered model after re-scan: ${refreshedModel.name}")
+                    }
+                }
+            }
+
             if (currentModel == null || !currentModel!!.isDownloaded) {
                 Log.e("ChatViewModel", "No valid model available for chat $chatId. CurrentModel: ${currentModel?.name}, isDownloaded: ${currentModel?.isDownloaded}, availableModels: ${_availableModels.value.size}")
                 val errorMessage = if (_availableModels.value.isEmpty()) {
                     context.getString(R.string.please_download_model)
                 } else {
-                    context.getString(R.string.model_not_loaded)
+                    // Include model name if available to help user identify which one failed
+                    val modelName = currentModel?.name ?: _selectedModel.value?.name ?: "Selected model"
+                    val baseError = context.getString(R.string.model_not_loaded)
+                    val format = currentModel?.modelFormat ?: "unknown"
+                    val hint = if (format == "gguf") {
+                        "\n\n💡 **Tip:** Ensure the GGUF file is fully downloaded. If it's an external file, make sure it's a valid GGUF."
+                    } else if (format == "onnx") {
+                        "\n\n💡 **Tip:** ONNX models require all component files to be present in their folder."
+                    } else ""
+
+                    "$baseError ($modelName)$hint"
                 }
                 repository.addMessage(chatId, errorMessage, isFromUser = false)
                 _isLoading.value = false

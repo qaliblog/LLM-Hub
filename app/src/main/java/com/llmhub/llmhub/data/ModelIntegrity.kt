@@ -6,79 +6,106 @@ import java.util.zip.ZipFile
 
 /**
  * Lightweight integrity checks for downloaded model files.
- * For now, we just verify the file exists and has a reasonable size.
- * Future versions could add more sophisticated validation like checksum verification.
+ * Provides format-specific validation (magic bytes) and relaxed size checks.
  */
-fun isModelFileValid(file: File, modelFormat: String): Boolean {
-    android.util.Log.d("ModelIntegrity", "Validating file: ${file.absolutePath}, format: $modelFormat, exists: ${file.exists()}, size: ${file.length()}")
-    
+private fun log(tag: String, msg: String) {
+    try {
+        android.util.Log.d(tag, msg)
+    } catch (_: Exception) {
+        println("[$tag] $msg")
+    }
+}
+
+/**
+ * Lightweight integrity checks for downloaded model files.
+ * Provides format-specific validation (magic bytes) and relaxed size checks.
+ */
+fun isModelFileValid(file: File, modelFormat: String, expectedSizeBytes: Long = 0L): Boolean {
+    val tag = "ModelIntegrity"
     if (!file.exists()) {
-        android.util.Log.d("ModelIntegrity", "File does not exist")
+        log(tag, "File does not exist: ${file.absolutePath}")
         return false
     }
     
-    // Check if file is at least 1MB (very basic check)
-    if (file.length() < 1L * 1024 * 1024) {
-        android.util.Log.d("ModelIntegrity", "File too small: ${file.length()} bytes")
+    // For directories (multi-file models), sum the size of all files
+    val actualSize = if (file.isDirectory) {
+        file.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+    } else {
+        file.length()
+    }
+    log(tag, "Validating: ${file.name}, format: $modelFormat, isDir: ${file.isDirectory}, actual: $actualSize, expected: $expectedSizeBytes")
+
+    // Absolute minimum: 1MB (except for very small directories which shouldn't happen for LLMs)
+    if (actualSize < 1L * 1024 * 1024) {
+        log(tag, "FAILURE: File too small for any LLM model (<1MB)")
         return false
     }
 
-    // Perform format-specific validation
-    val valid = when (modelFormat) {
-        "task", "litertlm" -> isTaskLikelyValid(file)
-        "gguf", "bin" -> isGgufValid(file) // 'bin' might be raw but often GGUF in this context? Or maybe just size check.
-        "onnx" -> true // ONNX validation is complex (protobuf), we rely on size check in caller or basic existence
-        else -> true // Fallback for unknown formats
+    return when (modelFormat.lowercase()) {
+        "gguf", "bin" -> {
+            val magicOk = isGgufValid(file)
+            // For GGUF, if magic is OK, allow size down to 50% of metadata (quantization variances)
+            // or 90% if magic is NOT found (unlikely for GGUF, but maybe it's a raw bin)
+            val threshold = if (magicOk) 0.50 else 0.90
+            val sizeOk = if (expectedSizeBytes > 0) actualSize >= (expectedSizeBytes * threshold).toLong() else true
+
+            if (!magicOk) log(tag, "GGUF magic mismatch for ${file.name}")
+            if (!sizeOk) log(tag, "GGUF size failure: $actualSize < ${expectedSizeBytes * threshold} (target: $expectedSizeBytes)")
+
+            magicOk && sizeOk
+        }
+        "task", "litertlm" -> {
+            val zipOk = isTaskLikelyValid(file)
+            val sizeOk = if (expectedSizeBytes > 0) actualSize >= (expectedSizeBytes * 0.90).toLong() else true
+
+            if (!zipOk) log(tag, "Task/ZIP magic mismatch for ${file.name}")
+            if (!sizeOk) log(tag, "Task size failure: $actualSize < ${expectedSizeBytes * 0.90} (target: $expectedSizeBytes)")
+
+            zipOk && sizeOk
+        }
+        "onnx" -> {
+            val sizeOk = if (expectedSizeBytes > 0) actualSize >= (expectedSizeBytes * 0.90).toLong() else true
+            if (!sizeOk) log(tag, "ONNX size failure: $actualSize < ${expectedSizeBytes * 0.90}")
+            sizeOk
+        }
+        else -> {
+            val sizeOk = if (expectedSizeBytes > 0) actualSize >= (expectedSizeBytes * 0.90).toLong() else true
+            sizeOk
+        }
     }
-    
-    android.util.Log.d("ModelIntegrity", "File validation result: $valid for ${file.name}")
-    return valid
 }
 
 private fun isTaskLikelyValid(file: File): Boolean {
-    android.util.Log.d("ModelIntegrity", "Validating .task file: ${file.absolutePath}")
-    
-    // 1) Try as ZIP
-    try {
-        ZipFile(file).use { 
-            android.util.Log.d("ModelIntegrity", "File is valid ZIP")
-            return true 
-        }
-    } catch (e: Exception) { 
-        android.util.Log.d("ModelIntegrity", "ZIP validation failed: ${e.message}")
-    }
-
-    // 2) Try checking ZIP magic ("PK")
+    // 1) Try checking ZIP magic ("PK") first for performance
     try {
         RandomAccessFile(file, "r").use { raf ->
-            if (raf.length() >= 2) {
-                val sig = ByteArray(2)
+            if (raf.length() >= 4) {
+                val sig = ByteArray(4)
                 raf.readFully(sig)
-                if (sig[0] == 'P'.code.toByte() && sig[1] == 'K'.code.toByte()) {
-                    android.util.Log.d("ModelIntegrity", "File has ZIP magic signature")
+                if (sig[0] == 'P'.code.toByte() && sig[1] == 'K'.code.toByte() && sig[2] == 0x03.toByte() && sig[3] == 0x04.toByte()) {
                     return true
                 }
-                android.util.Log.d("ModelIntegrity", "File signature: ${sig[0]}, ${sig[1]} (not ZIP)")
             }
         }
-    } catch (e: Exception) { 
-        android.util.Log.d("ModelIntegrity", "Magic signature check failed: ${e.message}")
-    }
+    } catch (_: Exception) { }
 
-    // 3) Fallback: accept by size threshold (>=10MB) to avoid false negatives
-    val result = file.length() >= 10L * 1024 * 1024
-    android.util.Log.d("ModelIntegrity", "Size fallback validation: $result (${file.length()} bytes)")
-    return result
+    // 2) Try opening as ZIP
+    return try {
+        ZipFile(file).use { true }
+    } catch (_: Exception) {
+        // 3) Fallback: if >= 10MB, assume it might be a valid FlatBuffer/raw format
+        file.length() >= 10L * 1024 * 1024
+    }
 }
 
 private fun isGgufValid(file: File): Boolean {
     return try {
         RandomAccessFile(file, "r").use { raf ->
-            if (raf.length() < 1024) return false
+            if (raf.length() < 4) return false
             val magic = ByteArray(4)
             raf.readFully(magic)
-            val magicStr = String(magic)
-            magicStr == "GGUF"
+            // GGUF magic: 'G' 'G' 'U' 'F'
+            magic[0] == 'G'.code.toByte() && magic[1] == 'G'.code.toByte() && magic[2] == 'U'.code.toByte() && magic[3] == 'F'.code.toByte()
         }
     } catch (_: Exception) {
         false

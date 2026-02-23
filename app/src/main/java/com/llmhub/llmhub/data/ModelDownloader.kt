@@ -77,10 +77,10 @@ class ModelDownloader(
         Log.d(TAG, "File check for ${model.name}: exists=${modelFile.exists()}, size=${if (modelFile.exists()) modelFile.length() else 0}, expectedSize=$inferredTotalBytes, path=${modelFile.absolutePath}")
 
         // If file exists and we know the exact size and it's complete, short-circuit
-        if (modelFile.exists() && inferredTotalBytes > 0 && modelFile.length() >= inferredTotalBytes) {
+        if (modelFile.exists() && inferredTotalBytes > 0 && modelFile.length() >= (inferredTotalBytes * 0.90).toLong()) {
             // Double-check that the file is actually valid by checking if it's not corrupted
             val fileIsValid = try {
-                isModelFileValid(modelFile, model.modelFormat)
+                isModelFileValid(modelFile, model.modelFormat, inferredTotalBytes)
             } catch (e: Exception) {
                 Log.w(TAG, "Error validating model file ${modelFile.absolutePath}: ${e.message}")
                 false

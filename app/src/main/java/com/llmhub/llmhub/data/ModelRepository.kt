@@ -76,20 +76,14 @@ object ModelRepository {
         }
 
         if (primaryFile.exists()) {
-            val sizeKnown = model.sizeBytes > 0
-            val sizeOk = if (sizeKnown) {
-                primaryFile.length() >= (model.sizeBytes * 0.98).toLong()
-            } else {
-                primaryFile.length() >= 10L * 1024 * 1024
-            }
-            val valid = isModelFileValid(primaryFile, model.modelFormat)
-            if (sizeOk && valid) {
+            val valid = isModelFileValid(primaryFile, model.modelFormat, model.sizeBytes)
+            if (valid) {
                 return model.copy(
                     isDownloaded = true,
                     sizeBytes = primaryFile.length()
                 )
             } else {
-                Log.d(TAG, "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath} sizeOk=$sizeOk valid=$valid")
+                Log.d(TAG, "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath}")
             }
         }
 
@@ -110,12 +104,11 @@ object ModelRepository {
                 // Ensure the backing file still exists and is valid
                 val modelsDir = File(context.filesDir, "models")
                 val file = File(modelsDir, model.localFileName())
-                val exists = file.exists()
-                val valid = exists && isModelFileValid(file, model.modelFormat)
+                val valid = isModelFileValid(file, model.modelFormat, model.sizeBytes)
                 if (!valid) {
-                    Log.d(TAG, "Skipping stale imported model ${model.name}: exists=$exists valid=$valid")
+                    Log.d(TAG, "Skipping stale imported model ${model.name}")
                 }
-                exists && valid
+                valid
             }.map { it.copy(isDownloaded = true) }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse imported models: ${e.message}")
