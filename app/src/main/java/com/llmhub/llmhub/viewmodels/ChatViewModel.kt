@@ -310,6 +310,11 @@ class ChatViewModel(
                 val model = _availableModels.value.find { it.name == savedModelName }
                 if (model != null) {
                     _selectedModel.value = model
+                    // Initialize currentModel if not already set, to ensure it's ready for the first prompt
+                    if (currentModel == null) {
+                        currentModel = model
+                        Log.d("ChatViewModel", "Initialized currentModel from saved settings: ${model.name}")
+                    }
                 }
             }
         }
@@ -511,14 +516,15 @@ class ChatViewModel(
                     Log.w("ChatViewModel", "Failed to replicate global chunks into new chat $newChatId: ${e.message}")
                 }
                 
-                // Preserve the current model for new chats but don't auto-load it
-                currentModel = previousModel
+                // Preserve the current model for new chats but don't auto-load it.
+                // Fallback to the user's last selected model or first available if no model is currently in memory.
+                currentModel = previousModel ?: _selectedModel.value ?: _availableModels.value.firstOrNull()
                 
                 // If we have a model, update the chat to use it but don't load it
-                if (previousModel != null) {
-                    repository.updateChatModel(newChatId, previousModel.name)
+                currentModel?.let { model ->
+                    repository.updateChatModel(newChatId, model.name)
                     _currentChat.value = repository.getChatById(newChatId)
-                    Log.d("ChatViewModel", "Set model ${previousModel.name} for new chat but didn't auto-load it")
+                    Log.d("ChatViewModel", "Set model ${model.name} for new chat but didn't auto-load it")
                 }
 
                 // Begin collecting messages for the newly created chat
@@ -653,28 +659,37 @@ class ChatViewModel(
                 // Model not in assets, check files directory
                 val modelsDir = File(context.filesDir, "models")
                 
-                // Check for ONNX models with additional files first
-                if (model.modelFormat == "onnx" && model.additionalFiles.isNotEmpty()) {
-                    val modelDirName = model.name.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_.-]"), "")
-                    val onnxModelDir = File(modelsDir, modelDirName)
+                // Detect model file(s) on disk. Check model-specific subdirectory first (used for models
+                // with additional files like vision projectors or ONNX components) then fallback to root models dir.
+                val modelDirName = model.name.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_.-]"), "")
+                val modelSubDir = File(modelsDir, modelDirName)
+                val primaryFileInSubdir = File(modelSubDir, model.localFileName())
+                val primaryFileInRoot = File(modelsDir, model.localFileName())
+
+                val primaryFile = if (primaryFileInSubdir.exists()) primaryFileInSubdir else primaryFileInRoot
+
+                if (model.additionalFiles.isNotEmpty()) {
+                    // Multi-file models (ONNX, or GGUF with mmproj)
+                    val targetDir = if (primaryFileInSubdir.exists()) modelSubDir else modelsDir
+                    val files = targetDir.listFiles() ?: emptyArray()
+                    val fileCount = files.filter { it.length() > 0 }.size
+                    val expectedFileCount = 1 + model.additionalFiles.size
                     
-                    if (onnxModelDir.exists() && onnxModelDir.isDirectory) {
-                        val files = onnxModelDir.listFiles() ?: emptyArray()
-                        val fileCount = files.filter { it.length() > 0 }.size
-                        val expectedFileCount = 1 + model.additionalFiles.size
+                    // Check if we have enough files and the primary one is valid
+                    if (fileCount >= expectedFileCount && primaryFile.exists()) {
+                        val sizeKnown = model.sizeBytes > 0
                         val totalSize = files.sumOf { it.length() }
+                        val sizeOk = !sizeKnown || totalSize >= (model.sizeBytes * 0.98).toLong()
+                        val valid = isModelFileValid(primaryFile, model.modelFormat)
                         
-                        if (fileCount >= expectedFileCount) {
+                        if (sizeOk && valid) {
                             isAvailable = true
                             actualSize = totalSize
-                            Log.d("ChatViewModel", "Found ONNX model in ${onnxModelDir.absolutePath} with $fileCount files (${totalSize / (1024*1024)} MB)")
-                        } else {
-                            Log.d("ChatViewModel", "ONNX model incomplete: only $fileCount/$expectedFileCount files in ${onnxModelDir.absolutePath}")
+                            Log.d("ChatViewModel", "Found VALID multi-file model (${model.modelFormat}) in ${targetDir.absolutePath} with $fileCount files")
                         }
                     }
                 } else {
                     // Regular single-file models
-                    val primaryFile = File(modelsDir, model.localFileName())
                     val legacyFile = File(modelsDir, "${model.name.replace(" ", "_")}.gguf")
 
                     // Migrate legacy file if needed
@@ -683,10 +698,11 @@ class ChatViewModel(
                     }
 
                     if (primaryFile.exists()) {
-                        // Only treat as available if file is fully downloaded (at least 99% of expected size)
+                        // Only treat as available if file is fully downloaded (at least 98% of expected size)
+                        // Align with ModelDownloadViewModel's 98% threshold to avoid "Model not properly loaded" errors.
                         val sizeKnown = model.sizeBytes > 0
                         val sizeOk = if (sizeKnown) {
-                            primaryFile.length() >= (model.sizeBytes * 0.99).toLong()
+                            primaryFile.length() >= (model.sizeBytes * 0.98).toLong()
                         } else {
                             primaryFile.length() >= 10L * 1024 * 1024 // Fallback for unknown size: at least 10MB
                         }
@@ -698,8 +714,8 @@ class ChatViewModel(
                         } else {
                             Log.d("ChatViewModel", "Ignoring incomplete/invalid model file: ${primaryFile.absolutePath} sizeOk=$sizeOk valid=$valid size=${primaryFile.length()}/${model.sizeBytes}")
                         }
-                        }
                     }
+                }
                 }
 
 
@@ -710,19 +726,21 @@ class ChatViewModel(
             }
         }
 
-        // Get imported models from ModelDownloadViewModel
+        // Get imported models directly from SharedPreferences to avoid ViewModel lifecycle issues
         val importedModels = try {
-            // Get ModelDownloadViewModel instance to access imported models
-            val modelDownloadViewModel = androidx.lifecycle.ViewModelProvider(
-                context as androidx.activity.ComponentActivity,
-                androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(context.application)
-            )[ModelDownloadViewModel::class.java]
-            // Filter out image generation models (qnn_npu, mnn_cpu) - those are for Image Generator, not AI Chat
-            modelDownloadViewModel.getImportedModels().filter { 
-                it.category != "qnn_npu" && it.category != "mnn_cpu" 
+            val prefs = context.getSharedPreferences("model_prefs", Context.MODE_PRIVATE)
+            val json = prefs.getString("imported_models", null)
+            if (json != null) {
+                val models = com.google.gson.Gson().fromJson(json, Array<LLMModel>::class.java).toList()
+                // Filter for Chat (skip SD models) and ensure they are still on disk
+                models.filter {
+                    it.category != "qnn_npu" && it.category != "mnn_cpu" && it.isDownloaded
+                }
+            } else {
+                emptyList()
             }
         } catch (e: Exception) {
-            Log.w("ChatViewModel", "Could not get imported models: ${e.message}")
+            Log.w("ChatViewModel", "Could not read imported models from prefs: ${e.message}")
             emptyList()
         }
         
