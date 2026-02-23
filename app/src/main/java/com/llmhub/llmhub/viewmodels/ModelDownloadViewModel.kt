@@ -270,8 +270,8 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
                 }
 
                 val sizeKnown = model.sizeBytes > 0
-                // 98% threshold to account for minor size differences or overhead
-                val completeEnough = sizeKnown && totalFoundBytes >= (model.sizeBytes * 0.98).toLong()
+                // 95% threshold to account for minor size differences or overhead
+                val completeEnough = sizeKnown && totalFoundBytes >= (model.sizeBytes * 0.95).toLong()
 
                 if (completeEnough) {
                     model.copy(
@@ -314,7 +314,7 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
 
                 if (file.exists()) {
                     val sizeKnown = model.sizeBytes > 0
-                    val completeEnough = sizeKnown && file.length() >= (model.sizeBytes * 0.98).toLong()
+                    val completeEnough = sizeKnown && file.length() >= (model.sizeBytes * 0.95).toLong()
                     val valid = isModelFileValid(file, model.modelFormat)
 
                     if (completeEnough && valid) {
@@ -684,7 +684,7 @@ class ModelDownloadViewModel(application: Application) : AndroidViewModel(applic
 
                     val minReasonableSize = 10 * 1024 * 1024 // 10 MiB
                     val completed = modelFile.exists() && (
-                        (expectedBytes > 0 && modelFile.length() >= (expectedBytes * 0.98).toLong()) ||
+                        (expectedBytes > 0 && modelFile.length() >= (expectedBytes * 0.95).toLong()) ||
                         (expectedBytes <= 0 && modelFile.length() >= minReasonableSize)
                     )
 

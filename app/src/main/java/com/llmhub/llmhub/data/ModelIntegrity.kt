@@ -38,17 +38,7 @@ fun isModelFileValid(file: File, modelFormat: String): Boolean {
 private fun isTaskLikelyValid(file: File): Boolean {
     android.util.Log.d("ModelIntegrity", "Validating .task file: ${file.absolutePath}")
     
-    // 1) Try as ZIP
-    try {
-        ZipFile(file).use { 
-            android.util.Log.d("ModelIntegrity", "File is valid ZIP")
-            return true 
-        }
-    } catch (e: Exception) { 
-        android.util.Log.d("ModelIntegrity", "ZIP validation failed: ${e.message}")
-    }
-
-    // 2) Try checking ZIP magic ("PK")
+    // 1) Try checking ZIP magic ("PK") first for performance
     try {
         RandomAccessFile(file, "r").use { raf ->
             if (raf.length() >= 2) {
@@ -58,29 +48,46 @@ private fun isTaskLikelyValid(file: File): Boolean {
                     android.util.Log.d("ModelIntegrity", "File has ZIP magic signature")
                     return true
                 }
-                android.util.Log.d("ModelIntegrity", "File signature: ${sig[0]}, ${sig[1]} (not ZIP)")
             }
         }
     } catch (e: Exception) { 
         android.util.Log.d("ModelIntegrity", "Magic signature check failed: ${e.message}")
     }
 
-    // 3) Fallback: accept by size threshold (>=10MB) to avoid false negatives
+    // 2) Try opening as ZIP
+    try {
+        ZipFile(file).use {
+            android.util.Log.d("ModelIntegrity", "File is valid ZIP")
+            return true
+        }
+    } catch (e: Exception) {
+        android.util.Log.d("ModelIntegrity", "ZIP validation failed: ${e.message}")
+    }
+
+    // 3) Fallback: accept by size threshold (>=10MB) to avoid false negatives for non-ZIP FlatBuffers
     val result = file.length() >= 10L * 1024 * 1024
-    android.util.Log.d("ModelIntegrity", "Size fallback validation: $result (${file.length()} bytes)")
+    android.util.Log.d("ModelIntegrity", "Size fallback validation (>=10MB): $result (${file.length()} bytes)")
     return result
 }
 
 private fun isGgufValid(file: File): Boolean {
     return try {
         RandomAccessFile(file, "r").use { raf ->
-            if (raf.length() < 1024) return false
+            if (raf.length() < 1024) {
+                android.util.Log.d("ModelIntegrity", "GGUF too small: ${raf.length()} bytes")
+                return false
+            }
             val magic = ByteArray(4)
             raf.readFully(magic)
-            val magicStr = String(magic)
-            magicStr == "GGUF"
+            val magicStr = String(magic, java.nio.charset.StandardCharsets.UTF_8)
+            val isValid = magicStr == "GGUF"
+            if (!isValid) {
+                android.util.Log.d("ModelIntegrity", "GGUF magic mismatch: expected 'GGUF', found '$magicStr'")
+            }
+            isValid
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        android.util.Log.d("ModelIntegrity", "GGUF validation error: ${e.message}")
         false
     }
 }

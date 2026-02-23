@@ -80,8 +80,9 @@ object ModelAvailabilityProvider {
                 if (primaryFile.exists()) {
                     val sizeKnown = model.sizeBytes > 0
                     val sizeOk = if (sizeKnown) {
-                        // Require file to be at least 99% of expected size to filter out partial downloads
-                        primaryFile.length() >= (model.sizeBytes * 0.99).toLong()
+                        // Require file to be at least 95% of expected size to filter out partial downloads
+                        // Relaxed threshold from 99% to avoid false negatives.
+                        primaryFile.length() >= (model.sizeBytes * 0.95).toLong()
                     } else {
                         primaryFile.length() >= 10L * 1024 * 1024
                     }

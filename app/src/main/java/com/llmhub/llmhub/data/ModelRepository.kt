@@ -78,7 +78,8 @@ object ModelRepository {
         if (primaryFile.exists()) {
             val sizeKnown = model.sizeBytes > 0
             val sizeOk = if (sizeKnown) {
-                primaryFile.length() >= (model.sizeBytes * 0.98).toLong()
+                // Relaxed threshold from 98% to 95%
+                primaryFile.length() >= (model.sizeBytes * 0.95).toLong()
             } else {
                 primaryFile.length() >= 10L * 1024 * 1024
             }

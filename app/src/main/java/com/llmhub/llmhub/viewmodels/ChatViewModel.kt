@@ -335,6 +335,9 @@ class ChatViewModel(
     // Public method to select model and persist
     fun selectModel(model: LLMModel) {
         _selectedModel.value = model
+        // Synchronize currentModel to ensure sendMessage can immediately use the selection
+        currentModel = model
+
         // Auto-select backend if not set
         if (_selectedBackend.value == null) {
             _selectedBackend.value = if (model.supportsGpu) {
@@ -679,7 +682,8 @@ class ChatViewModel(
                     if (fileCount >= expectedFileCount && primaryFile.exists()) {
                         val sizeKnown = model.sizeBytes > 0
                         val totalSize = files.sumOf { it.length() }
-                        val sizeOk = !sizeKnown || totalSize >= (model.sizeBytes * 0.98).toLong()
+                        // Relaxed threshold (0.95) to avoid false negatives on minor size reporting differences
+                        val sizeOk = !sizeKnown || totalSize >= (model.sizeBytes * 0.95).toLong()
                         val valid = isModelFileValid(primaryFile, model.modelFormat)
                         
                         if (sizeOk && valid) {
@@ -698,11 +702,11 @@ class ChatViewModel(
                     }
 
                     if (primaryFile.exists()) {
-                        // Only treat as available if file is fully downloaded (at least 98% of expected size)
-                        // Align with ModelDownloadViewModel's 98% threshold to avoid "Model not properly loaded" errors.
+                        // Only treat as available if file is fully downloaded (at least 95% of expected size)
+                        // Relaxed threshold from 98% to avoid "Model not properly loaded" errors on minor discrepancies.
                         val sizeKnown = model.sizeBytes > 0
                         val sizeOk = if (sizeKnown) {
-                            primaryFile.length() >= (model.sizeBytes * 0.98).toLong()
+                            primaryFile.length() >= (model.sizeBytes * 0.95).toLong()
                         } else {
                             primaryFile.length() >= 10L * 1024 * 1024 // Fallback for unknown size: at least 10MB
                         }
@@ -799,7 +803,9 @@ class ChatViewModel(
                 val errorMessage = if (_availableModels.value.isEmpty()) {
                     context.getString(R.string.please_download_model)
                 } else {
-                    context.getString(R.string.model_not_loaded)
+                    // Include model name if available to help user identify which one failed
+                    val modelName = currentModel?.name ?: _selectedModel.value?.name ?: "Selected model"
+                    context.getString(R.string.model_not_loaded) + " ($modelName)"
                 }
                 repository.addMessage(chatId, errorMessage, isFromUser = false)
                 _isLoading.value = false
